@@ -23,8 +23,6 @@ static void about_draw_cb(Canvas* canvas, void* _model) {
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str_aligned(canvas, 64, 24, AlignCenter, AlignTop, "Ported by I12BP8");
         canvas_draw_str_aligned(canvas, 64, 34, AlignCenter, AlignTop, "Research by furrtek");
-        canvas_draw_str_aligned(canvas, 64, 44, AlignCenter, AlignTop, "Owned ESLs only");
-        canvas_draw_str_aligned(canvas, 64, 54, AlignCenter, AlignTop, "No store use");
     }
 }
 

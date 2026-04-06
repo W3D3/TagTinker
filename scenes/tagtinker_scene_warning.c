@@ -3,42 +3,147 @@
  */
 
 #include "../tagtinker_app.h"
+#include <gui/elements.h>
 
 enum {
     TagTinkerStartupWarningContinue,
 };
 
-static const char* startup_warning_text =
-    "\ec\e#TagTinker - Research Tool\n"
-    "\n"
-    "This is an educational research tool for infrared electronic shelf label "
-    "(ESL) protocols.\n"
-    "It implements publicly documented signaling for tags commonly used in "
-    "retail (often referred to as Pricer-style ESLs).\n"
-    "Use ONLY on tags you personally own or have explicit permission to test.\n"
-    "Using this tool on retail store systems without authorization may violate "
-    "laws on fraud or interference with business operations. You are solely "
-    "responsible for your actions. Misuse is not endorsed.\n"
-    "\n"
-    "\ecPress OK to continue.";
+typedef struct {
+    uint8_t page;
+} WarningViewModel;
 
-static void startup_warning_button_cb(GuiButtonType result, InputType type, void* context) {
-    if(type != InputTypeShort || result != GuiButtonTypeCenter) return;
+typedef struct {
+    const char* title;
+    const char* lines[2];
+} WarningPage;
 
+static const WarningPage startup_warning_pages[] = {
+    {
+        .title = "RESEARCH TOOL:",
+        .lines =
+            {
+                "Educational tool for",
+                "infrared ESL study.",
+            },
+    },
+    {
+        .title = "PERMISSION:",
+        .lines =
+            {
+                "Use only on tags",
+                "you own or may test.",
+            },
+    },
+    {
+        .title = "CAUTION:",
+        .lines =
+            {
+                "Unauthorized use",
+                "may be illegal.",
+            },
+    },
+    {
+        .title = "RESPONSIBILITY:",
+        .lines =
+            {
+                "You are responsible",
+                "for your actions.",
+            },
+    },
+};
+
+static const uint8_t startup_warning_page_count =
+    sizeof(startup_warning_pages) / sizeof(startup_warning_pages[0]);
+
+static bool warning_is_unlocked(const WarningViewModel* model) {
+    return model->page >= (startup_warning_page_count - 1);
+}
+
+static void warning_draw_cb(Canvas* canvas, void* _model) {
+    WarningViewModel* model = _model;
+    bool unlocked = warning_is_unlocked(model);
+    const WarningPage* page = &startup_warning_pages[model->page];
+
+    canvas_clear(canvas);
+
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str_aligned(canvas, 64, 13, AlignCenter, AlignCenter, page->title);
+
+    canvas_set_font(canvas, FontSecondary);
+    canvas_draw_str_aligned(canvas, 64, 29, AlignCenter, AlignCenter, page->lines[0]);
+    canvas_draw_str_aligned(canvas, 64, 39, AlignCenter, AlignCenter, page->lines[1]);
+
+    if(model->page > 0) {
+        elements_button_left(canvas, "Prev");
+    }
+
+    elements_button_right(canvas, unlocked ? "OK" : "Next");
+}
+
+static bool warning_input_cb(InputEvent* event, void* context) {
     TagTinkerApp* app = context;
-    view_dispatcher_send_custom_event(
-        app->view_dispatcher, TagTinkerStartupWarningContinue);
+    bool handled = false;
+
+    if(event->type != InputTypeShort && event->type != InputTypeRepeat) {
+        return false;
+    }
+
+    WarningViewModel* model = view_get_model(app->warning_view);
+
+    switch(event->key) {
+    case InputKeyDown:
+    case InputKeyRight:
+        if(model->page + 1 < startup_warning_page_count) {
+            model->page++;
+            handled = true;
+        }
+        break;
+    case InputKeyUp:
+    case InputKeyLeft:
+        if(model->page > 0) {
+            model->page--;
+            handled = true;
+        }
+        break;
+    case InputKeyOk:
+        if(event->type == InputTypeShort) {
+            if(warning_is_unlocked(model)) {
+                handled = true;
+                view_commit_model(app->warning_view, false);
+                view_dispatcher_send_custom_event(
+                    app->view_dispatcher, TagTinkerStartupWarningContinue);
+                return true;
+            } else if(model->page + 1 < startup_warning_page_count) {
+                model->page++;
+                handled = true;
+            }
+        }
+        break;
+    default:
+        break;
+    }
+
+    view_commit_model(app->warning_view, handled);
+    return handled;
 }
 
 void tagtinker_scene_warning_on_enter(void* ctx) {
     TagTinkerApp* app = ctx;
 
-    widget_reset(app->widget);
-    widget_add_text_scroll_element(app->widget, 0, 0, 128, 52, startup_warning_text);
-    widget_add_button_element(
-        app->widget, GuiButtonTypeCenter, "OK", startup_warning_button_cb, app);
+    if(!app->warning_view_allocated) {
+        view_allocate_model(app->warning_view, ViewModelTypeLockFree, sizeof(WarningViewModel));
+        view_set_context(app->warning_view, app);
+        view_set_draw_callback(app->warning_view, warning_draw_cb);
+        view_set_input_callback(app->warning_view, warning_input_cb);
+        app->warning_view_allocated = true;
+    }
 
-    view_dispatcher_switch_to_view(app->view_dispatcher, TagTinkerViewWidget);
+    WarningViewModel* model = view_get_model(app->warning_view);
+    model->page = 0;
+    view_commit_model(app->warning_view, true);
+
+    view_dispatcher_switch_to_view(app->view_dispatcher, TagTinkerViewWarning);
 }
 
 bool tagtinker_scene_warning_on_event(void* ctx, SceneManagerEvent event) {
@@ -55,6 +160,5 @@ bool tagtinker_scene_warning_on_event(void* ctx, SceneManagerEvent event) {
 }
 
 void tagtinker_scene_warning_on_exit(void* ctx) {
-    TagTinkerApp* app = ctx;
-    widget_reset(app->widget);
+    UNUSED(ctx);
 }

@@ -209,6 +209,10 @@ static TagTinkerApp* app_alloc(void) {
     view_dispatcher_add_view(
         app->view_dispatcher, TagTinkerViewNumlock, numlock_input_get_view(app->numlock));
 
+    app->warning_view = view_alloc();
+    view_dispatcher_add_view(
+        app->view_dispatcher, TagTinkerViewWarning, app->warning_view);
+
     app->transmit_view = view_alloc();
     view_dispatcher_add_view(
         app->view_dispatcher, TagTinkerViewTransmit, app->transmit_view);
@@ -246,6 +250,7 @@ static void app_free(TagTinkerApp* app) {
     view_dispatcher_remove_view(app->view_dispatcher, TagTinkerViewPopup);
     view_dispatcher_remove_view(app->view_dispatcher, TagTinkerViewWidget);
     view_dispatcher_remove_view(app->view_dispatcher, TagTinkerViewNumlock);
+    view_dispatcher_remove_view(app->view_dispatcher, TagTinkerViewWarning);
     view_dispatcher_remove_view(app->view_dispatcher, TagTinkerViewTransmit);
     view_dispatcher_remove_view(app->view_dispatcher, TagTinkerViewAbout);
 
@@ -263,6 +268,7 @@ static void app_free(TagTinkerApp* app) {
     furi_record_close(RECORD_NOTIFICATION);
     furi_record_close(RECORD_DIALOGS);
 
+    view_free(app->warning_view);
     view_free(app->transmit_view);
     view_free(app->about_view);
     furi_thread_free(app->tx_thread);

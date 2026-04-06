@@ -36,6 +36,7 @@
 
 /* Views */
 typedef enum {
+    TagTinkerViewWarning,
     TagTinkerViewSubmenu,
     TagTinkerViewVarItemList,
     TagTinkerViewTextInput,
@@ -69,9 +70,11 @@ struct TagTinkerApp {
     Popup* popup;
     Widget* widget;
     NumlockInput* numlock;
+    View* warning_view;
     View* target_actions_view;
     View* transmit_view;
     View* about_view;
+    bool warning_view_allocated;
     bool transmit_view_allocated;
     bool about_view_allocated;
 
