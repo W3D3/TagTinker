@@ -1,115 +1,132 @@
-# 🛠️ TagTinker
+# TagTinker
 
 <p align="center">
-  <strong>Educational Infrared ESL Research Tool for Flipper Zero</strong><br>
-  <sub>Protocol study • Signal analysis • Controlled display experiments on authorized lab hardware</sub>
+  <strong>Infrared ESL Research Toolkit for Flipper Zero</strong><br>
+  <sub>Protocol study • Signal analysis • Controlled display experiments on authorized hardware</sub>
 </p>
 
 <p align="center">
   <img alt="License: GPL-3.0" src="https://img.shields.io/badge/License-GPL--3.0-blue.svg">
   <img alt="Platform: Flipper Zero" src="https://img.shields.io/badge/Platform-Flipper%20Zero-black.svg">
-  <img alt="Status: Research Project" src="https://img.shields.io/badge/Status-Research%20Project-informational.svg">
+  <img alt="Status: Research Project" src="https://img.shields.io/badge/Status-Research%20Only-informational.svg">
+</p>
+
+<p align="center">
+  <img src="https://github.com/i12bp8/TagTinker/blob/main/demo.jpg" width="700" alt="TagTinker demo">
+</p>
+
+<p align="center">
+  <sub>Owner-authorized lab display experiment</sub>
 </p>
 
 ---
 
-<div align="center">
-  <img src="https://github.com/i12bp8/TagTinker/blob/main/demo.jpg" width="600" alt="TagTinker Demo">
-  <p><sub>Owner-authorized lab ESL display experiment</sub></p>
-</div>
+> [!IMPORTANT]
+> **TagTinker is a research tool.**
+>
+> It is intended **only** for protocol study, signal analysis, and controlled experiments on hardware you personally own or are explicitly authorized to test.
+>
+> This repository does **not** authorize access to, modification of, or interference with any third-party deployment, commercial installation, or retail environment.
 
----
+> [!WARNING]
+> **Strictly prohibited uses include:**
+> - Testing against deployed third-party systems
+> - Use in retail or commercial environments
+> - Altering prices, product data, or operational displays
+> - Interfering with business operations
+> - Bypassing pairing, authorization, or security controls
+> - Any unauthorized, unlawful, or harmful activity
 
-## ⚠️ Important Notice
+## Overview
 
-**This project is strictly for educational and research purposes only.**
+TagTinker is a Flipper Zero app for **educational research into infrared electronic shelf-label protocols** and related display behavior on authorized test hardware.
 
-You may use TagTinker **only** on ESL hardware that:
-- You personally own, **or**
-- You have **explicit written permission** from the owner to test in a controlled environment.
+It is focused on:
+- protocol observation and replay analysis
+- controlled display experiments
+- monochrome image preparation workflows
+- local tooling for research and interoperability testing
 
-### ❌ Strictly Prohibited
-- Using in retail stores or any commercial environment
-- Targeting deployed retail systems or third-party equipment
-- Altering prices, product information, or operational displays
-- Interfering with commercial operations
-- Bypassing pairing, authorization, or security measures
-- Any unauthorized, unlawful, or harmful activity
+This README intentionally avoids deployment-oriented instructions and excludes guidance for interacting with live commercial systems.
 
-> The publication of this source code does **not** grant permission to access, modify, or interfere with any third-party system or device.
+## Features
 
----
+- Text, image, and test-pattern display experiments
+- Local web-based image preparation utility (`tools/tagtinker.html`)
+- Signal and response testing for authorized bench hardware
+- Small, modular codebase suitable for further research
+- Research-first project structure with clear scope boundaries
 
-## 📋 Project Scope
+## How It Works
 
-TagTinker is limited to home-lab and research use, including:
+TagTinker is built around the study of **infrared electronic shelf-label communication** used by fixed-transmitter labeling systems.
 
-- Infrared protocol study and signal analysis
-- Controlled display experiments on authorized test hardware
-- Local tooling for preparing monochrome display assets
-- Educational diagnostics and interoperability research
+At a high level:
 
-This README intentionally does **not** include installation, targeting, or operational instructions for deployed retail systems.
+- tags receive modulated infrared transmissions rather than ordinary consumer-IR commands
+- communication is based on addressed protocol frames containing command, parameter, and integrity fields
+- display updates are carried as prepared payloads for supported monochrome graphics formats
+- local tooling in this project helps researchers prepare assets and perform controlled experiments on authorized hardware
 
----
+This project is intended to help researchers understand:
+- signal structure
+- frame and payload behavior
+- display data preparation constraints
+- safe, authorized bench-testing workflows
 
-## ✨ Features
+For the underlying reverse-engineering background and deeper protocol research, see:
+- **Furrtek’s ESL research:** [https://www.furrtek.org/?a=esl](https://www.furrtek.org/?a=esl)
+- **PrecIR reference implementation:** [https://github.com/furrtek/PrecIR](https://github.com/furrtek/PrecIR)
 
-- 📝 Text, custom image, and test-pattern display experiments
-- 🖼️ Local web-based image preparation utility (`tools/tagtinker.html`)
-- 🔬 Single-device protocol study and LED response tools
-- Clean, modular codebase for further research
+## Project Scope
 
----
+TagTinker is limited to **home-lab and authorized research use**, including:
 
-## 🔒 Responsible Use
+- infrared protocol study
+- signal timing and frame analysis
+- controlled experiments on owned or authorized hardware
+- monochrome asset preparation for testing
+- educational diagnostics and interoperability research
 
-You are solely responsible for ensuring that any use of this project complies with applicable law, property rights, and required authorizations.
+It is **not** a retail tool, operational tool, or field-use utility.
 
-If you do not own the hardware or lack explicit permission, **do not use** this project on it.
+## Responsible Use
 
-Misuse is strictly prohibited and entirely at your own risk.
+You are solely responsible for ensuring that any use of this software is lawful, authorized, and appropriate for your environment.
 
----
+The maintainer does not authorize, approve, or participate in any unauthorized use of this project, and disclaims responsibility for misuse, damage, disruption, legal violations, or any consequences arising from such use.
 
-## 🔗 No Affiliation
+If you do not own the hardware, or do not have explicit written permission to test it, **do not use this project on it**.
 
-This is an **independent research project**.  
-It is not affiliated with, endorsed by, authorized by, or sponsored by any ESL manufacturer (including Pricer), retailer, or system operator.
+Any unauthorized use is outside the intended scope of this repository and is undertaken entirely at the user’s own risk.
 
-Brand names are used only for descriptive and research purposes.
+## No Affiliation
 
----
+This is an **independent research project**.
 
-## 🙏 Credits
+It is not affiliated with, endorsed by, authorized by, or sponsored by any electronic shelf-label vendor, retailer, infrastructure provider, or system operator.
 
-This project is a port and adaptation of the excellent public reverse-engineering work by **[furrtek (PrecIR)](https://github.com/furrtek/PrecIR)** and related community contributions.
+Any references to external research, public documentation, or reverse-engineering work are included strictly for educational and research context.
 
----
+## Credits
 
-## 📄 License
+This project is a port and adaptation of the excellent public reverse-engineering work by **[furrtek / PrecIR](https://github.com/furrtek/PrecIR)** and related community research.
+
+## License
 
 Licensed under the **GNU General Public License v3.0** (GPL-3.0).  
 See the [`LICENSE`](LICENSE) file for details.
 
----
+## Warranty Disclaimer
 
-## ⚖️ Warranty Disclaimer
+This software is provided **“AS IS”**, without warranty of any kind, express or implied.
 
-This software is provided **"AS IS"**, without warranty of any kind, express or implied.
+In no event shall the authors or copyright holders be liable for any claim, damages, or other liability arising from the use of this software.
 
-In no event shall the authors or copyright holders be liable for any claim, damages or other liability arising from the use of this software.
+## Maintainer Statement
 
----
+This repository is maintained as a **narrowly scoped educational research project**.
 
-## 👤 Maintainer Statement
-
-This repository is maintained as a narrowly scoped educational research project.
-
-The maintainer does **not** authorize, encourage, or condone any use against third-party devices, deployed retail systems, or any environment without explicit permission.
+The maintainer does **not** authorize, encourage, condone, or accept responsibility for use against third-party devices, deployed commercial systems, retail infrastructure, or any environment where the user lacks explicit permission.
 
 **Research responsibly.**
-
----
-
-*Stay curious. Hack ethically.*
