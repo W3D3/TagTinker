@@ -722,36 +722,42 @@ function quantize(img, ACC) {
     buf[i*3+2] = srgb2lin(src[i*4+2]);
   }
 
-  /* Hue-aligned, lightness-weighted nearest-palette search.
+  /* Modern e-paper tri-colour quantiser - the goal is the "newsprint
+   * illusion" where the eye fuses W/B halftone density into apparent
+   * grey shades and the single chromatic ink only appears as a faint
+   * accent over warm regions, NOT as a solid colour fill.
    *
-   * The naive Oklab nearest treated red and black as equidistant from a
-   * dark-red pixel, so accent ink got smeared across shadow areas, washing
-   * out depth. Two changes fix that:
+   * Three knobs make this work, all tuned for the Oklab metric used
+   * below (typical photo chroma magnitude ~0.05..0.25, never anywhere
+   * near the accent's own ~0.20):
    *
-   *   1. Distance weights L (lightness) ~1.6x more than chroma, so shadows
-   *      always pick black and highlights always pick white before colour
-   *      ever wins. That keeps tonal structure of the photo intact.
+   *   1. L_WEIGHT - lightness dominates the distance so shadows pick
+   *      black and highlights pick white before chroma is even a
+   *      tie-breaker. This is what keeps the tonal structure intact.
    *
-   *   2. Accent gets a bonus proportional to the *signed projection* of the
-   *      pixel's chroma onto the accent direction. Red ink is only pulled
-   *      toward pixels whose hue actually leans red (positive a*); a blue
-   *      or green pixel never picks red. Squaring the projection gives a
-   *      smooth ramp so faintly-red regions get sparse red dither and
-   *      saturated reds get dense red, matching how a real risograph layers
-   *      a single chromatic ink under W/B halftones.
+   *   2. CHROMA_CAP - the source image's a/b axes are pre-scaled
+   *      toward grey BEFORE dithering. With only one chromatic ink
+   *      to spend, we don't want to "owe" the error diffuser more
+   *      red than the paper can deliver - that's the bug that made
+   *      everything red. Treating the source as low-saturation lets
+   *      FS spread the residual through black and white naturally.
    *
-   * The result is a photo-grade tri-colour quantisation where red/yellow
-   * lives where it belongs and depth/shading is carried by W+B mixing.
+   *   3. accentPull - very small bonus for hue-aligned pixels, just
+   *      enough to break ties in favour of accent in the most-saturated
+   *      regions. The bonus uses the *signed projection* of the pixel's
+   *      chroma onto the accent direction so opposite-hue pixels (a
+   *      blue sky) never pick red.
    */
+  const L_WEIGHT = 3.5;
+  /* Map source chroma 1.0 -> accent's chroma * 1.1 so even the most
+   * saturated source pixel never sits beyond what one ink can render. */
   const accentLab = useColor ? paletteLab[2] : null;
   const accentMag = accentLab ? Math.hypot(accentLab[1], accentLab[2]) || 1e-9 : 1;
-  /* Strength of the accent attraction. Detail slider can tilt -50%..+50%. */
-  const accentPull = 0.85 + tilt * 0.6;
-  const L_WEIGHT = 1.6;
+  const CHROMA_CAP = useColor ? Math.min(1, (accentMag * 1.1)) : 1;
+  /* Detail slider tilts attraction +/- ~30%. */
+  const accentPull = 0.06 * (1 + tilt * 0.5);
 
-  function nearest(r, g, b) {
-    const lab = rgb2oklab(r, g, b);
-    const L = lab[0], a = lab[1], bp = lab[2];
+  function nearest(L, a, bp) {
     let best = 0, bd = Infinity;
     for (let p = 0; p < paletteRGB.length; p++) {
       const dl = L - paletteLab[p][0];
@@ -759,8 +765,6 @@ function quantize(img, ACC) {
       const db = bp - paletteLab[p][2];
       let d = L_WEIGHT * dl*dl + da*da + db*db;
       if (useColor && p === 2) {
-        /* Signed projection of pixel chroma onto accent chroma direction.
-         * Positive only when the pixel hue is aligned with the accent. */
         const proj = (a * accentLab[1] + bp * accentLab[2]) / accentMag;
         const align = Math.max(0, proj);
         d -= align * align * accentPull;
@@ -768,6 +772,18 @@ function quantize(img, ACC) {
       if (d < bd) { bd = d; best = p; }
     }
     return best;
+  }
+
+  /* Sample the (already-tone-mapped) linear-RGB working pixel into the
+   * Oklab the dither operates on, with chroma contracted toward grey
+   * so we don't ask for more colour than three inks can deliver. */
+  function sampleLab(r, g, b) {
+    const lab = rgb2oklab(r, g, b);
+    if (useColor) {
+      lab[1] *= CHROMA_CAP;
+      lab[2] *= CHROMA_CAP;
+    }
+    return lab;
   }
 
   if (S.dither === "thr" || S.dither === "bayer8") {
@@ -786,7 +802,8 @@ function quantize(img, ACC) {
           continue;
         }
       }
-      idx[i] = nearest(r, g, b);
+      const lab = sampleLab(r, g, b);
+      idx[i] = nearest(lab[0], lab[1], lab[2]);
     }
   } else {
     const k = KERNELS[S.dither] || KERNELS.fs;
@@ -803,7 +820,8 @@ function quantize(img, ACC) {
       for (let x = xStart; x !== xEnd; x += xStep) {
         const i = y*W + x;
         const r = buf[i*3], g = buf[i*3+1], b = buf[i*3+2];
-        const p = nearest(r, g, b);
+        const lab = sampleLab(r, g, b);
+        const p = nearest(lab[0], lab[1], lab[2]);
         idx[i] = p;
         const er = r - paletteRGB[p][0];
         const eg = g - paletteRGB[p][1];
