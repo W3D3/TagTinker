@@ -62,7 +62,7 @@ To understand the underlying protocol, signal structure, and history, please rea
 - **Furrtek’s ESL research:** [https://www.furrtek.org/?a=esl](https://www.furrtek.org/?a=esl)
 - **PrecIR reference implementation:** [https://github.com/furrtek/PrecIR](https://github.com/furrtek/PrecIR)
 
-NFC tag decoding contributed by **7h30th3r0n3**.
+NFC tag decoding contributed by **7h30th3r0n3**.  
 
 ## Disclaimer
 
