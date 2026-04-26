@@ -722,22 +722,48 @@ function quantize(img, ACC) {
     buf[i*3+2] = srgb2lin(src[i*4+2]);
   }
 
-  /* Saturation-aware nearest in Oklab. The accent palette gets a tiny bonus
-   * proportional to chroma so the algorithm uses W+B for neutral pixels and
-   * mixes accent in only where the photo actually has colour — just like a
-   * real risograph or newsprint print. */
+  /* Hue-aligned, lightness-weighted nearest-palette search.
+   *
+   * The naive Oklab nearest treated red and black as equidistant from a
+   * dark-red pixel, so accent ink got smeared across shadow areas, washing
+   * out depth. Two changes fix that:
+   *
+   *   1. Distance weights L (lightness) ~1.6x more than chroma, so shadows
+   *      always pick black and highlights always pick white before colour
+   *      ever wins. That keeps tonal structure of the photo intact.
+   *
+   *   2. Accent gets a bonus proportional to the *signed projection* of the
+   *      pixel's chroma onto the accent direction. Red ink is only pulled
+   *      toward pixels whose hue actually leans red (positive a*); a blue
+   *      or green pixel never picks red. Squaring the projection gives a
+   *      smooth ramp so faintly-red regions get sparse red dither and
+   *      saturated reds get dense red, matching how a real risograph layers
+   *      a single chromatic ink under W/B halftones.
+   *
+   * The result is a photo-grade tri-colour quantisation where red/yellow
+   * lives where it belongs and depth/shading is carried by W+B mixing.
+   */
+  const accentLab = useColor ? paletteLab[2] : null;
+  const accentMag = accentLab ? Math.hypot(accentLab[1], accentLab[2]) || 1e-9 : 1;
+  /* Strength of the accent attraction. Detail slider can tilt -50%..+50%. */
+  const accentPull = 0.85 + tilt * 0.6;
+  const L_WEIGHT = 1.6;
+
   function nearest(r, g, b) {
     const lab = rgb2oklab(r, g, b);
+    const L = lab[0], a = lab[1], bp = lab[2];
     let best = 0, bd = Infinity;
     for (let p = 0; p < paletteRGB.length; p++) {
-      const dl = lab[0] - paletteLab[p][0];
-      const da = lab[1] - paletteLab[p][1];
-      const db = lab[2] - paletteLab[p][2];
-      let d = dl*dl + da*da + db*db;
+      const dl = L - paletteLab[p][0];
+      const da = a - paletteLab[p][1];
+      const db = bp - paletteLab[p][2];
+      let d = L_WEIGHT * dl*dl + da*da + db*db;
       if (useColor && p === 2) {
-        /* Pull accent closer when the source pixel itself is chromatic. */
-        const chroma = Math.hypot(lab[1], lab[2]);
-        d -= chroma * (0.012 + tilt * 0.018);
+        /* Signed projection of pixel chroma onto accent chroma direction.
+         * Positive only when the pixel hue is aligned with the accent. */
+        const proj = (a * accentLab[1] + bp * accentLab[2]) / accentMag;
+        const align = Math.max(0, proj);
+        d -= align * align * accentPull;
       }
       if (d < bd) { bd = d; best = p; }
     }
@@ -764,23 +790,32 @@ function quantize(img, ACC) {
     }
   } else {
     const k = KERNELS[S.dither] || KERNELS.fs;
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-      const i = y*W + x;
-      const r = buf[i*3], g = buf[i*3+1], b = buf[i*3+2];
-      const p = nearest(r, g, b);
-      idx[i] = p;
-      /* Diffuse residual error in linear RGB so neighbouring pixels can pick
-       * a different palette entry and the three colours visually blend. */
-      const er = r - paletteRGB[p][0];
-      const eg = g - paletteRGB[p][1];
-      const eb = b - paletteRGB[p][2];
-      for (const [dx, dy, w] of k) {
-        const nx = x+dx, ny = y+dy;
-        if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
-        const j = (ny*W + nx) * 3;
-        buf[j]   += er * w;
-        buf[j+1] += eg * w;
-        buf[j+2] += eb * w;
+    /* Serpentine scan: even rows left-to-right, odd rows right-to-left.
+     * Mirroring the kernel on reverse rows breaks up the diagonal worm
+     * artefacts that plain Floyd-Steinberg leaves in smooth gradients,
+     * which is the single biggest visible difference between "looks
+     * like a screenshot of a Mac dither" and a clean photograph. */
+    for (let y = 0; y < H; y++) {
+      const rev = (y & 1) === 1;
+      const xStart = rev ? W - 1 : 0;
+      const xEnd   = rev ? -1    : W;
+      const xStep  = rev ? -1    : 1;
+      for (let x = xStart; x !== xEnd; x += xStep) {
+        const i = y*W + x;
+        const r = buf[i*3], g = buf[i*3+1], b = buf[i*3+2];
+        const p = nearest(r, g, b);
+        idx[i] = p;
+        const er = r - paletteRGB[p][0];
+        const eg = g - paletteRGB[p][1];
+        const eb = b - paletteRGB[p][2];
+        for (const [dx, dy, w] of k) {
+          const nx = x + (rev ? -dx : dx), ny = y + dy;
+          if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+          const j = (ny*W + nx) * 3;
+          buf[j]   += er * w;
+          buf[j+1] += eg * w;
+          buf[j+2] += eb * w;
+        }
       }
     }
   }
