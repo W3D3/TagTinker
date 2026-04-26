@@ -72,6 +72,9 @@ typedef struct {
     uint16_t width;
     uint16_t height;
     uint8_t page;
+    /* True when this BMP was authored for a different resolution than the
+     * current target, meaning the transmitter will rescale it on the fly. */
+    bool resampled;
     char image_path[TAGTINKER_IMAGE_PATH_LEN + 1];
 } TagTinkerSyncedImage;
 

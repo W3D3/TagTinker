@@ -830,6 +830,16 @@ static TagTinkerApp* app_alloc(void) {
     app->text_padding_pct = 0;
     strcpy(app->text_input_buf, "TagTinker");
     app->selected_target = -1;
+
+    /* Ensure the dropped-image folder exists so the user can pre-stage BMPs
+     * prepared with the web image preparer (web-image-prep/index.html). */
+    {
+        Storage* storage = furi_record_open(RECORD_STORAGE);
+        storage_common_mkdir(storage, APP_DATA_PATH(""));
+        storage_common_mkdir(storage, APP_DATA_PATH("dropped"));
+        furi_record_close(RECORD_STORAGE);
+    }
+
     tagtinker_settings_load(app);
     tagtinker_targets_load(app);
     tagtinker_recents_load(app);
