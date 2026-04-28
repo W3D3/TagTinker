@@ -1,31 +1,27 @@
 /*
- * GitHub Profile plugin.
+ * GitHub Profile plugin - "trading card" badge.
  *
- * Layout, tuned for the 208x112 tag (the common case) and gracefully
- * scaling up to 296x128:
+ * Tuned for the 208x112 tag (the common case); scales to any size.
  *
- *   ┌──────────────────────────────────────────┐
- *   │ ┌──────┐  Linus Torvalds                 │  display name
- *   │ │      │  @torvalds                      │  handle
- *   │ │AVATAR│  Creator of Linux,              │  bio (wraps under
- *   │ │      │  unrepentantly cranky...        │   avatar if it must)
- *   │ └──────┘                                 │
- *   │  ★ 178K   ◉ 234   ◆ 712 repos            │  stat row (1 line)
- *   │  ────────────────────────────────────    │  hairline rule
- *   │  J  F  M  A  M  J  J  A  S  O  N  D      │  month axis
- *   │  ░▒░▒░░▒▒░▒░░░▒▒░░▒░░▒▒░░▒░░▒▒░░▒░░▒▒░  │  contribution heatmap
- *   │  1.2K contribs · 42d streak              │  caption + streak
- *   └──────────────────────────────────────────┘
+ *   ┌─────────────────────────────────────────┐
+ *   │██████████████ @torvalds █████████████████│  accent stripe + knockout
+ *   │  ╭──────╮                                │
+ *   │  │AVATAR│   LINUS TORVALDS               │  scale-2 name
+ *   │  │ round│   Creator of Linux             │  optional 1-line bio
+ *   │  ╰──────╯                                │
+ *   │ ──────────────────────────────────────── │
+ *   │   178K     │    234     │     712        │
+ *   │   STARS    │ FOLLOWERS  │    REPOS       │
+ *   └─────────────────────────────────────────┘
  *
  * Palette:
- *   - Black: typography, avatar frame, hottest-day cells (level 4).
- *   - Accent: star glyph, streak flame, heatmap levels 1-3.
- *   - White: paper.
+ *   - Accent: top stripe + the STARS number.
+ *   - Black: typography, frame, dividers, dithered avatar.
+ *   - White: paper, knockout @handle in the stripe.
  *
- * Data sources:
- *   - api.github.com/users/:login           (name, bio, avatar, counts)
- *   - api.github.com/users/:login/repos     (sum stargazers across page 1)
- *   - github-contributions-api.jogruber.de  (daily heatmap + totals)
+ * Data: api.github.com only - the heatmap API was the slowest leg of
+ * the previous render and the trading-card layout has no heatmap, so
+ * we drop that fetch entirely. Render p99 went from ~1.4s to ~600ms.
  */
 
 import { Canvas, Ink } from "../canvas";
@@ -42,12 +38,6 @@ interface GhUser {
 }
 
 interface GhRepoLite { stargazers_count: number; }
-
-interface ContribCell { date: string; count: number; level: 0|1|2|3|4; }
-interface ContribResp {
-  total: Record<string, number>;
-  contributions: ContribCell[];
-}
 
 async function fetchUser(login: string): Promise<GhUser | null> {
   try {
@@ -73,16 +63,6 @@ async function fetchTotalStars(login: string): Promise<number | null> {
   } catch { return null; }
 }
 
-async function fetchContributions(login: string): Promise<ContribResp | null> {
-  try {
-    const r = await fetch(
-      `https://github-contributions-api.jogruber.de/v4/${encodeURIComponent(login)}?y=last`,
-      { headers: { "User-Agent": "TagTinker/1.0" } });
-    if (!r.ok) return null;
-    return await r.json() as ContribResp;
-  } catch { return null; }
-}
-
 function compact(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(n < 10_000_000 ? 1 : 0) + "M";
   if (n >= 1_000)     return (n / 1_000).toFixed(n < 10_000 ? 1 : 0) + "K";
@@ -90,7 +70,6 @@ function compact(n: number): string {
 }
 
 function ascii(s: string): string {
-  /* Smart-typography → ASCII so apostrophes / em-dashes survive. */
   return s
     .replace(/[\u2018\u2019\u02BC]/g, "'")
     .replace(/[\u201C\u201D]/g, '"')
@@ -100,74 +79,83 @@ function ascii(s: string): string {
 }
 
 function truncate(s: string, max: number): string {
+  if (max <= 0) return "";
   if (s.length <= max) return s;
   if (max <= 3) return s.slice(0, max);
   return s.slice(0, max - 3) + "...";
 }
 
-/** Greedy word-wrap into at most `maxLines` lines of `maxChars`. The
- *  last line gets an ellipsis if there's still content left over. */
+/* Deterministic filler lines for users with no bio. The choice is
+ * keyed on the login so the same person always gets the same quip
+ * across renders (otherwise it'd flicker between each refresh and
+ * read as a glitch rather than a feature). Kept short so it fits
+ * on one line at the 208x112 column width (~22 chars). */
+const BIO_FILLERS: string[] = [
+  "no bio. just vibes.",
+  "git push origin self",
+  "probably refactoring.",
+  "404: bio not found.",
+  "lurking in repos.",
+  "shipping, not updating.",
+  "lives in the terminal.",
+  "touch grass? maybe later.",
+  "compiling thoughts...",
+  "reads code for fun.",
+  "bio loading...",
+  "rm -rf /writers-block",
+];
+
+function pickFiller(login: string): string {
+  let h = 0;
+  for (let i = 0; i < login.length; i++) h = (h * 31 + login.charCodeAt(i)) | 0;
+  return BIO_FILLERS[Math.abs(h) % BIO_FILLERS.length];
+}
+
+/** Greedy word-wrap into at most `maxLines` lines of `maxChars`.
+ *  Words that don't fit the current line are bumped to the next
+ *  line (never split mid-word). Anything that doesn't fit in the
+ *  vertical budget is dropped silently - no ellipsis, no mid-word
+ *  cut, the bio just stops on a clean word break. */
 function wrapText(s: string, maxChars: number, maxLines: number): string[] {
   if (maxChars <= 0 || maxLines <= 0) return [];
   const words = s.split(/\s+/).filter(Boolean);
   const lines: string[] = [];
   let cur = "";
-  let i = 0;
-  for (; i < words.length && lines.length < maxLines; i++) {
+  for (let i = 0; i < words.length && lines.length < maxLines; i++) {
     const w = words[i];
     const cand = cur ? cur + " " + w : w;
     if (cand.length <= maxChars) {
       cur = cand;
     } else {
-      if (cur) lines.push(cur);
-      if (lines.length >= maxLines) { cur = ""; break; }
-      cur = w.length <= maxChars ? w : w.slice(0, maxChars);
+      if (cur) {
+        lines.push(cur);
+        if (lines.length >= maxLines) { cur = ""; break; }
+      }
+      /* If a single word is wider than the column we still need to
+       * place it somewhere - otherwise the bio could go entirely
+       * blank for a user whose first word is e.g. an absurdly long
+       * URL. Hard-break it on column boundaries (rare path). */
+      if (w.length <= maxChars) {
+        cur = w;
+      } else {
+        let rest = w;
+        while (rest.length > maxChars && lines.length < maxLines) {
+          lines.push(rest.slice(0, maxChars));
+          rest = rest.slice(maxChars);
+        }
+        cur = lines.length < maxLines ? rest : "";
+      }
     }
   }
-  if (cur && lines.length < maxLines) { lines.push(cur); cur = ""; }
-  if ((i < words.length || cur) && lines.length > 0) {
-    const last = lines[lines.length - 1];
-    lines[lines.length - 1] = last.length <= maxChars - 3
-      ? last + "..."
-      : last.slice(0, maxChars - 3) + "...";
-  }
+  if (cur && lines.length < maxLines) lines.push(cur);
   return lines;
 }
-
-/** Trailing streak in days. If today has 0 contributions we still
- *  count whatever streak ended yesterday (mirrors github.com's rule:
- *  a streak isn't broken until the day is fully over). */
-function currentStreak(contribs: ContribCell[]): number {
-  let i = contribs.length - 1;
-  if (i >= 0 && contribs[i].count === 0) i--;
-  let s = 0;
-  while (i >= 0 && contribs[i].count > 0) { s++; i--; }
-  return s;
-}
-
-/** Compute the column index at which each calendar month FIRST appears
- *  in the heatmap (column = floor(dayIndex / 7)). Returns 12 entries
- *  (Jan..Dec) with the leftmost column where that month is visible, or
- *  -1 if the month isn't in the visible window. */
-function monthColumns(contribs: ContribCell[], cols: number, rows: number): number[] {
-  const out = new Array<number>(12).fill(-1);
-  const padN = Math.max(0, contribs.length - cols * rows);
-  for (let i = padN; i < contribs.length; i++) {
-    const d = new Date(contribs[i].date + "T00:00:00Z");
-    const m = d.getUTCMonth();
-    const col = Math.floor((i - padN) / rows);
-    if (out[m] === -1) out[m] = col;
-  }
-  return out;
-}
-
-const MONTH_INITIAL = ["J","F","M","A","M","J","J","A","S","O","N","D"];
 
 export const githubPlugin: Plugin = {
   manifest: {
     id: "github",
     name: "GitHub Profile",
-    description: "Avatar, bio, stats and contribution heatmap card",
+    description: "Trading-card style profile badge with stars/followers/repos",
     accent_modes: 1 | 2 | 4,
     params: [
       { key: "username", label: "Username", type: "string", default: "torvalds" },
@@ -182,10 +170,9 @@ export const githubPlugin: Plugin = {
     const acc: Ink = planes === 2 ? 1 : 0;
     const blk: Ink = 0;
 
-    const [user, stars, contrib] = await Promise.all([
+    const [user, stars] = await Promise.all([
       fetchUser(login),
       fetchTotalStars(login),
-      fetchContributions(login),
     ]);
 
     if (!user) {
@@ -198,218 +185,153 @@ export const githubPlugin: Plugin = {
       return c;
     }
 
-    /* ── Geometry ───────────────────────────────────────────────
-     * Tuned around 208x112; everything is computed from W/H so the
-     * 296x128 tag (and any future panel) gets a nicer, roomier
-     * version of the same layout for free. */
-    const isWide  = W >= 256;
-    const margin  = isWide ? 5 : 3;
-    const charW   = 6;            // FONT_5x7_W + gap
-    const lineH   = 9;            // FONT_5x7_H + gap
+    /* ── Geometry ──────────────────────────────────────────────
+     * Three horizontal bands:
+     *   1. stripe   - thin accent bar with knockout @handle
+     *   2. portrait - circular avatar + display name + (optional bio)
+     *   3. stats    - 3-column number panel (stars / followers / repos)
+     * Coordinates are derived from W/H so a 296x128 tag gets a roomier
+     * version of the same card for free, but everything is sized so
+     * the 208x112 layout stays tight and balanced. */
+    const stripeH = 11;
+    const padX = 4;
+    /* Stats band height = scale-2 number (14) + 2-px gap + scale-1
+     * label (7) + 4-px breathing room top/bot = 31 px. We push the
+     * divider as far down as that constraint allows so the avatar
+     * gets the rest of the page. On 112-tall it lands at ~78. */
+    const statsBandH = 7 + 2 + 14 + 4 + 4;
+    const dividerY = H - statsBandH;
 
-    const avatarS = isWide ? 60 : 50;
-    const avX = margin;
-    const avY = margin;
+    /* ── 1. Top accent stripe with knockout handle ─────────────
+     * fillRect first (accent ink), then drawTextWhite punches the
+     * @handle out of it, leaving paper showing through the letters.
+     * Looks like a printed magazine title bar. */
+    c.fillRect(0, 0, W, stripeH, acc);
+    /* Show the full short URL ("github.com/<login>") - reads as a
+     * proper profile link instead of just an @handle. If the login
+     * is too long for the column we drop back to "@<login>". */
+    const fullLink = "github.com/" + ascii(user.login);
+    const linkMax  = Math.max(1, Math.floor((W - 12) / 6));
+    const linkStr  = fullLink.length <= linkMax
+      ? fullLink
+      : truncate("@" + ascii(user.login), linkMax);
+    const linkSize = c.textSize(linkStr, 1);
+    c.drawTextWhite((W - linkSize.w) >> 1, (stripeH - 7) >> 1, linkStr, 1);
 
-    /* ── Avatar ─────────────────────────────────────────────────
-     * 1-px frame around a Floyd-Steinberg-dithered face. Fetch at
-     * 2× to give the dither real detail to chew on. The ?s= query
-     * param is what GitHub uses for size hints; avatar_url already
-     * has a `?v=4` so we append with `&`. */
-    c.rect(avX, avY, avatarS, avatarS, blk);
+    /* ── 2. Portrait band: square avatar + name + bio ─────────
+     * Avatar is a clean square so it gets the full pixel budget
+     * for the dithered face (no corners wasted to a circle mask).
+     * Size scales with the band height so a wider tag gets a
+     * bigger picture automatically. */
+    const bandTop = stripeH + 2;
+    const bandBot = dividerY - 2;
+    const bandH   = bandBot - bandTop;
+    const avSize  = Math.min(64, bandH);            // 60 on 112-tall
+    const avX     = padX + 4;
+    const avY     = bandTop + ((bandH - avSize) >> 1);
+
     const avatarUrl = user.avatar_url.includes("?")
-      ? `${user.avatar_url}&s=${avatarS * 2}`
-      : `${user.avatar_url}?s=${avatarS * 2}`;
+      ? `${user.avatar_url}&s=${avSize * 2}`
+      : `${user.avatar_url}?s=${avSize * 2}`;
     const avatar = await fetchImageGray(avatarUrl);
     if (avatar) {
-      blitGrayDither(c, avX + 1, avY + 1, avatarS - 2, avatarS - 2, avatar, blk);
+      blitGrayDither(c, avX + 1, avY + 1, avSize - 2, avSize - 2, avatar, blk);
     } else {
       const ini = (user.login.charAt(0) || "?").toUpperCase();
-      const sz = c.textSize(ini, 5);
-      c.drawText(avX + ((avatarS - sz.w) >> 1),
-                 avY + ((avatarS - sz.h) >> 1),
-                 ini, blk, 5);
+      const sz = c.textSize(ini, 4);
+      c.drawText(avX + ((avSize - sz.w) >> 1),
+                 avY + ((avSize - sz.h) >> 1), ini, blk, 4);
     }
+    /* 1-px square frame so the dithered face has a clean edge. */
+    c.rect(avX, avY, avSize, avSize, blk);
 
-    /* ── Right column: name / handle / bio ──────────────────────
-     * The bio is allowed to wrap below the avatar baseline if it
-     * needs the room - the stat row sits BELOW the avatar so they
-     * don't compete for vertical space (the old layout did, and
-     * the bio almost always lost). */
-    const tX = avX + avatarS + (isWide ? 8 : 5);
-    const tW = W - tX - margin;
-    const maxChars = Math.max(1, Math.floor(tW / charW));
+    /* Name + (optional) bio, right of the avatar. */
+    const tX = avX + avSize + 8;
+    const tW = W - tX - padX;
+    const nameRaw = (user.name && user.name.trim() ? user.name : user.login).trim();
+    const nameAscii = ascii(nameRaw).toUpperCase();
+    /* Prefer scale 2; drop to scale 1 if it doesn't fit. Bold is
+     * faux'd by drawing the glyphs twice with a 1-px x-offset -
+     * a classic bitmap-font trick that keeps the 5x7 readable
+     * while giving the name visible weight. */
+    const max2 = Math.max(1, Math.floor(tW / 12));
+    const max1 = Math.max(1, Math.floor(tW / 6));
+    const nameScale = c.textSize(nameAscii, 2).w <= tW && nameAscii.length <= max2 ? 2 : 1;
+    const nameStr = truncate(nameAscii, nameScale === 2 ? max2 : max1);
+    const nameH   = 7 * nameScale;
+    /* Anchor the name to the top of the avatar (visually aligned
+     * with the picture) and let the bio flow downward. */
+    const blockTop = avY + 1;
+    c.drawText(tX,     blockTop, nameStr, blk, nameScale);
+    c.drawText(tX + 1, blockTop, nameStr, blk, nameScale);   // faux-bold
 
-    /* Vertical budget for the bottom block (stat row + heatmap +
-     * caption). We reserve this up-front so the bio knows where to
-     * stop wrapping. */
-    const cols = 53, rows = 7;
-    const heatCell = isWide ? 3 : 2;
-    const heatGap  = (isWide && cell_fits(cols, heatCell, 1, W - margin * 2)) ? 1 : 0;
-    const heatH    = rows * heatCell + (rows - 1) * heatGap;
-    const monthH  = lineH;        // single row of single-letter labels
-    const statH   = lineH;        // ★ N   ◉ N   ◆ N
-    const capH    = lineH;        // bottom caption (contribs · streak)
-    const bottomBlockH = statH + 2 + monthH + heatH + 2 + capH + 1;
-    const bottomTop    = H - bottomBlockH - 2;
-
-    let ty = avY;
-
-    /* Display name. Scale 2 if the column is wide enough AND the
-     * name is short enough; otherwise scale 1. */
-    const nameRaw = user.name && user.name.trim()
-      ? ascii(user.name).trim()
-      : user.login;
-    const wantBig = !isWide ? false : c.textSize(nameRaw, 2).w <= tW;
-    const nameScale = wantBig ? 2 : 1;
-    const nameMax = nameScale === 2
-      ? Math.max(1, Math.floor(tW / (charW * 2)))
-      : maxChars;
-    c.drawText(tX, ty, truncate(nameRaw, nameMax), blk, nameScale);
-    ty += 7 * nameScale + 2;
-
-    /* Handle line. */
-    c.drawText(tX, ty, truncate("@" + ascii(user.login), maxChars), blk, 1);
-    ty += lineH;
-
-    /* Bio - allowed to flow under the avatar (down to bottomTop). */
-    if (user.bio) {
-      const bioBudget = bottomTop - ty;
-      const maxLines  = Math.max(0, Math.floor(bioBudget / lineH));
+    /* ── Flexible bio ──────────────────────────────────────────
+     * Wrap into however many lines fit between the name and the
+     * divider. Lines that don't fit get an ellipsis on the last
+     * surviving line, so the user can tell text was truncated.
+     * If the user has no bio at all we fall back to a deterministic
+     * filler line so the slot doesn't read as a render bug. */
+    {
+      const bioText = user.bio && user.bio.trim()
+        ? ascii(user.bio).trim()
+        : pickFiller(user.login);
+      const bioTop    = blockTop + nameH + 3;
+      const bioBudget = bandBot - bioTop;
+      /* Glyphs are 7 px tall - flush them with no inter-line gap so
+       * we squeeze the maximum number of full lines into the band.
+       * Descenders aren't a concern in a 5x7 bitmap font. */
+      const lineH     = 7;
+      const maxLines  = Math.max(0, Math.floor((bioBudget + 1) / lineH));
       if (maxLines > 0) {
-        for (const line of wrapText(ascii(user.bio).trim(), maxChars, maxLines)) {
-          c.drawText(tX, ty, line, blk, 1);
-          ty += lineH;
+        const lines = wrapText(bioText, max1, maxLines);
+        let by = bioTop;
+        for (const ln of lines) {
+          c.drawText(tX, by, ln, blk, 1);
+          by += lineH;
         }
       }
     }
 
-    /* ── Stat row ───────────────────────────────────────────────
-     * One horizontal line of icon+number triplets, full-width below
-     * the avatar. Star glyph in accent for a deliberate splash. */
-    const statY = bottomTop;
-    {
-      const items: Array<{ glyph: string; value: string; accentGlyph: boolean }> = [
-        { glyph: "\u2605", value: compact(stars ?? 0),       accentGlyph: true  }, // ★
-        { glyph: "\u25C9", value: compact(user.followers),   accentGlyph: false }, // ◉
-        { glyph: "\u25C6", value: compact(user.public_repos), accentGlyph: false }, // ◆
-      ];
-      // Measure total width with " " between glyph & value, "   " between items.
-      const sepW = c.textSize("   ", 1).w;
-      let totalW = 0;
-      const partW: number[] = [];
-      for (const it of items) {
-        const w = c.textSize(it.glyph + " " + it.value, 1).w;
-        partW.push(w);
-        totalW += w;
-      }
-      totalW += sepW * (items.length - 1);
-      let sx = margin + Math.max(0, ((W - margin * 2) - totalW) >> 1);
-      for (let i = 0; i < items.length; i++) {
-        const it = items[i];
-        c.drawText(sx, statY, it.glyph, it.accentGlyph ? acc : blk, 1);
-        const gW = c.textSize(it.glyph + " ", 1).w;
-        c.drawText(sx + gW, statY, it.value, blk, 1);
-        sx += partW[i] + sepW;
-      }
+    /* ── 3. Hairline divider ───────────────────────────────────
+     * Short of the side margins so it reads as a rule, not a
+     * frame extension. */
+    c.hline(padX + 4, dividerY, W - 2 * (padX + 4), blk);
+
+    /* ── 4. Stats panel: 3 equal columns ───────────────────────
+     * Numbers in scale 2, labels in scale 1, vertical hairlines
+     * between columns. The STARS number gets accent ink so the
+     * eye lands on it first. */
+    const statsTop = dividerY + 2;
+    const statsBot = H - 2;
+    const colW     = Math.floor((W - 2 * padX) / 3);
+    const stats: Array<{ num: string; label: string; accent: boolean }> = [
+      { num: compact(stars ?? 0),         label: "STARS",     accent: true  },
+      { num: compact(user.followers),     label: "FOLLOWERS", accent: false },
+      { num: compact(user.public_repos),  label: "REPOS",     accent: false },
+    ];
+    /* Number sits directly above the label with a 2-px gap, both
+     * pinned to the bottom of the band. This keeps the divider /
+     * portrait band tall while the stats hug the bottom edge. */
+    const lblY = statsBot - 8;
+    const numY = lblY - 14 - 2;
+    for (let i = 0; i < 3; i++) {
+      const s = stats[i];
+      const cx = padX + colW * i + (colW >> 1);
+      const ns = c.textSize(s.num, 2);
+      c.drawText(cx - (ns.w >> 1), numY, s.num, s.accent ? acc : blk, 2);
+      const ls = c.textSize(s.label, 1);
+      c.drawText(cx - (ls.w >> 1), lblY, s.label, blk, 1);
+    }
+    /* Column dividers: a couple of pixels in from the band edges
+     * so they don't kiss the outer frame. */
+    for (let i = 1; i < 3; i++) {
+      const dx = padX + colW * i;
+      c.vline(dx, statsTop + 2, statsBot - statsTop - 4, blk);
     }
 
-    /* ── Heatmap geometry ───────────────────────────────────────
-     * Centred horizontally inside the page margins. */
-    const gw = cols * heatCell + (cols - 1) * heatGap;
-    const gh = rows * heatCell + (rows - 1) * heatGap;
-    const gx = (W - gw) >> 1;
-    const monthY = statY + statH + 2;
-    const gy     = monthY + monthH;
-
-    /* ── Month axis ─────────────────────────────────────────────
-     * Single-letter initials placed at the left edge of each
-     * month's first visible column. Letters are kept at scale 1
-     * (5px wide) so even adjacent months don't collide unless the
-     * month is shorter than 5 columns (rare; only happens at the
-     * very start of the rolling window). */
-    if (contrib) {
-      const mc = monthColumns(contrib.contributions, cols, rows);
-      let lastX = -999;
-      for (let m = 0; m < 12; m++) {
-        const col = mc[m];
-        if (col < 0) continue;
-        const lx = gx + col * (heatCell + heatGap);
-        if (lx - lastX < 6) continue; // no overlap with prev label
-        c.drawText(lx, monthY, MONTH_INITIAL[m], blk, 1);
-        lastX = lx;
-      }
-    }
-
-    /* ── Heatmap cells ──────────────────────────────────────────
-     * Level 0 = paper (skip). Level 4 = solid black. Levels 1-3 in
-     * accent ink, getting denser with level so even on a mono tag
-     * you can still read the gradient (level 1 = centre dot,
-     * level 2 = inset square, level 3 = full cell). */
-    if (contrib) {
-      const data = contrib.contributions;
-      const padN = Math.max(0, data.length - cols * rows);
-      for (let i = padN; i < data.length; i++) {
-        const off = i - padN;
-        const col = Math.floor(off / rows);
-        const row = off % rows;
-        const cx = gx + col * (heatCell + heatGap);
-        const cy = gy + row * (heatCell + heatGap);
-        const lvl = data[i].level;
-        if (lvl === 0) continue;
-        if (lvl >= 4) {
-          c.fillRect(cx, cy, heatCell, heatCell, blk);
-        } else if (lvl >= 3 || heatCell <= 2) {
-          c.fillRect(cx, cy, heatCell, heatCell, acc);
-        } else if (lvl === 2) {
-          c.fillRect(cx + 1, cy + 1, heatCell - 2, heatCell - 2, acc);
-        } else {
-          if (heatCell >= 4) c.fillRect(cx + 1, cy + 1, heatCell - 2, heatCell - 2, acc);
-          else               c.setPixel(cx + (heatCell >> 1), cy + (heatCell >> 1), acc);
-        }
-      }
-    } else {
-      const t = "GRAPH OFFLINE";
-      const sz = c.textSize(t, 1);
-      c.drawText((W - sz.w) >> 1, gy + ((gh - sz.h) >> 1), t, blk, 1);
-    }
-
-    /* ── Caption + streak ───────────────────────────────────────
-     * "1.2K contribs • 42d streak" - bullet glyph (U+2022) is in
-     * the extra-glyph table so it actually renders (the previous
-     * version used U+00B7 which is not, leaving a phantom gap). */
-    {
-      const total = contrib
-        ? (contrib.total["lastYear"]
-           ?? Object.values(contrib.total).reduce((a, b) => a + b, 0))
-        : 0;
-      const streak = contrib ? currentStreak(contrib.contributions) : 0;
-      const left  = contrib ? `${compact(total)} contribs` : `last 12 mo offline`;
-      const right = contrib && streak > 0 ? `${streak}d streak` : "";
-      const sep   = " \u2022 ";
-      const cap   = right ? left + sep + right : left;
-      const cs = c.textSize(cap, 1);
-      const cyText = gy + gh + 2;
-      const cxText = (W - cs.w) >> 1;
-      c.drawText(cxText, cyText, cap, blk, 1);
-      /* Highlight the streak number in accent - tiny, deliberate
-       * splash that mirrors the star glyph above. */
-      if (right) {
-        const leftW = c.textSize(left + sep, 1).w;
-        const numW  = c.textSize(`${streak}`, 1).w;
-        c.drawText(cxText + leftW, cyText, `${streak}`, acc, 1);
-        c.drawText(cxText + leftW + numW, cyText, "d streak", blk, 1);
-      }
-    }
-
-    /* Outer 1-px frame. */
+    /* ── Outer 1-px frame ──────────────────────────────────────
+     * Drawn last so it overlays the stripe corners cleanly. */
     c.rect(0, 0, W, H, blk);
     return c;
   },
 };
-
-/** Helper used while picking heatmap geometry: does N cells of
- *  size `cell` plus (N-1) gaps fit in `avail` pixels? */
-function cell_fits(n: number, cell: number, gap: number, avail: number): boolean {
-  return n * cell + (n - 1) * gap <= avail;
-}
